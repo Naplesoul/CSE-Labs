@@ -19,8 +19,10 @@ class extent_protocol {
   };
 
   enum types {
+    T_UNDEFINED = 0,
     T_DIR = 1,
-    T_FILE
+    T_FILE,
+    T_SYMLINK
   };
 
   struct attr {
