@@ -40,7 +40,9 @@ class chfs_client {
   chfs_client(std::string, std::string);
 
   bool isfile(inum);
+  bool issymlink(inum);
   bool isdir(inum);
+  extent_protocol::types gettype(inum);
 
   int getfile(inum, fileinfo &);
   int getdir(inum, dirinfo &);
@@ -51,10 +53,12 @@ class chfs_client {
   int readdir(inum, std::list<dirent> &);
   int write(inum, size_t, off_t, const char *, size_t &);
   int read(inum, size_t, off_t, std::string &);
-  int unlink(inum,const char *);
+  int unlink(inum, const char *);
   int mkdir(inum , const char *, mode_t , inum &);
   
   /** you may need to add symbolic link related methods here.*/
+  int symlink(const char *, inum, const char *, inum &);
+  int readlink(inum, std::string &);
 };
 
 #endif 
