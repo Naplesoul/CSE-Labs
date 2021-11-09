@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <algorithm>
 
 #include <mutex>
 #include <string>
@@ -22,6 +23,22 @@ struct KeyVal {
     string val;
 };
 
+int scanDir(string path, vector<string> &ret)
+{
+	DIR *dir;
+    struct dirent *rent;
+    dir = opendir(path.c_str());
+	char s[100];
+    while((rent = readdir(dir))){
+        strcpy(s,rent->d_name);
+        if (s[0] != '.'){
+            ret.push_back(s);
+        }   
+    }
+    closedir(dir);
+    return ret.size();
+}
+
 //
 // The map function is called once for each file of input. The first
 // argument is the name of the input file, and the second is the
@@ -32,7 +49,32 @@ struct KeyVal {
 vector<KeyVal> Map(const string &filename, const string &content)
 {
 	// Copy your code from mr_sequential.cc here.
+	vector<KeyVal> results;
+    string str = content;
+    int length = str.length();
+    int word_end = 0;
+    while (length > 0 && word_end <= length) {
+        char letter = str[word_end];
+        if ((letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')) {
+            word_end ++;
+        } else {
+            if (word_end != 0) {
+                string word = str.substr(0, word_end);
+                KeyVal kv;
+                kv.key = word;
+                kv.val = "1";
+                results.push_back(kv);
+                str.erase(0, word_end + 1);
+                word_end = 0;
+                length = str.length();
+            } else {
+                str.erase(0, 1);
+                length --;
+            }
+        }
+    }
 
+    return results;
 }
 
 //
@@ -43,7 +85,12 @@ vector<KeyVal> Map(const string &filename, const string &content)
 string Reduce(const string &key, const vector < string > &values)
 {
     // Copy your code from mr_sequential.cc here.
-
+	int total_num = 0;
+    for (string value : values) {
+        int num = atoi(value.c_str());
+        total_num += num;
+    }
+    return to_string(total_num);
 }
 
 
@@ -88,13 +135,106 @@ Worker::Worker(const string &dst, const string &dir, MAPF mf, REDUCEF rf)
 void Worker::doMap(int index, const vector<string> &filenames)
 {
 	// Lab2: Your code goes here.
+	string filename = filenames[0];
+    string content;
 
+    // Read the whole file into the buffer.
+    getline(ifstream(filename), content, '\0');
+
+	ofstream outs[REDUCER_COUNT];
+	for (int i = 0; i < REDUCER_COUNT; ++i) {
+		string mr_filename = basedir;
+		mr_filename.append("mr-").append(to_string(index)).append("-").append(to_string(i));
+		outs[i] = ofstream(mr_filename);
+	}
+
+	string outputs[REDUCER_COUNT];
+	
+    vector <KeyVal> KVA = Map(filename, content);
+	for (const KeyVal kv : KVA) {
+		int reduceId = kv.key[0] % REDUCER_COUNT;
+		outputs[reduceId].append(kv.key).append(":").append(kv.val).append(":");
+	}
+
+	for (int i = 0; i < REDUCER_COUNT; ++i) {
+		outs[i] << outputs[i];
+		outs[i].close();
+	}
 }
 
 void Worker::doReduce(int index)
 {
 	// Lab2: Your code goes here.
+	vector<string> filenames;
+	int fileCount = scanDir(this->basedir, filenames);
+	if (fileCount <= 0) {
+		printf("Reduce worker: no intermediate files\n");
+		return;
+	}
+	
+	vector<KeyVal> KVA;
 
+	for (const string filename : filenames) {
+		int mapId, reduceId;
+
+		sscanf(filename.c_str(), "mr-%d-%d", &mapId, &reduceId);
+		char mapIdFirst = filename[3];
+		if (reduceId == index && mapIdFirst >= '0' && mapIdFirst <= '9') {
+			string mr_filename = basedir;
+			mr_filename.append(filename);
+    		string content;
+			ifstream in(mr_filename);
+			getline(in, content, '\0');
+			in.close();
+
+			while (content.length() > 0) {
+				size_t pos = content.find(':');
+				KeyVal kv;
+				kv.key = content.substr(0, pos);
+				content.erase(0, pos + 1);
+
+				pos = content.find(':');
+				kv.val = content.substr(0, pos);
+				content.erase(0, pos + 1);
+
+				KVA.push_back(kv);
+			}
+		}
+	}
+
+
+	sort(KVA.begin(), KVA.end(),
+    	[](KeyVal const & a, KeyVal const & b) {
+		return a.key < b.key;
+	});
+
+
+	string mr_out = basedir;
+	mr_out.append("mr-out-").append(to_string(index));
+	ofstream out(mr_out);
+
+	string output;
+
+	for (size_t i = 0; i < KVA.size();) {
+        size_t j = i + 1;
+        for (; j < KVA.size() && KVA[j].key == KVA[i].key;)
+        j++;
+
+        vector < string > values;
+        for (size_t k = i; k < j; k++) {
+        	values.push_back(KVA[k].val);
+        }
+
+        output.append(KVA[i].key);
+		output.append(" ");
+		output.append(Reduce(KVA[i].key, values));
+		output.append("\n");
+
+        i = j;
+    }
+
+	out << output;
+	out.close();
 }
 
 void Worker::doSubmit(mr_tasktype taskType, int index)
@@ -119,6 +259,32 @@ void Worker::doWork()
 		// if mr_tasktype::NONE, meaning currently no work is needed, then sleep
 		//
 
+		int i = 0;
+		mr_protocol::AskTaskResponse response;
+		mr_protocol::status ret = cl->call(mr_protocol::asktask, i, response);
+		VERIFY (ret == mr_protocol::OK);
+		vector<string> filenames;
+		switch (response.taskType)
+		{
+		case mr_tasktype::MAP:
+			filenames.push_back(response.filename);
+			doMap(response.index, filenames);
+			doSubmit(mr_tasktype::MAP, response.index);
+			break;
+
+		case mr_tasktype::REDUCE:
+			doReduce(response.index);
+			doSubmit(mr_tasktype::REDUCE, response.index);
+			break;
+		
+		case mr_tasktype::NONE:
+			sleep(1);
+			break;
+
+		default:
+			printf("Worker: Unexpected task type: %d\n", response.taskType);
+			break;
+		}
 	}
 }
 
