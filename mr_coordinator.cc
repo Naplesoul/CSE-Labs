@@ -48,12 +48,73 @@ private:
 
 mr_protocol::status Coordinator::askTask(int, mr_protocol::AskTaskResponse &reply) {
 	// Lab2 : Your code goes here.
-
+	this->mtx.lock();
+	reply.taskType = mr_tasktype::NONE;
+	if (this->completedMapCount >= long(this->mapTasks.size())) {
+		if (this->completedReduceCount >= long(this->reduceTasks.size())) {
+			reply.taskType = mr_tasktype::NONE;
+			this->isFinished = true;
+		} else {
+			const size_t length = this->reduceTasks.size();
+			for (size_t i = 0; i < length; ++i) {
+				if (!this->reduceTasks[i].isAssigned) {
+					reply.index = i;
+					reply.taskType = mr_tasktype::REDUCE;
+					this->reduceTasks[i].isAssigned = true;
+					break;
+				}
+			}
+		}
+	} else {
+		const size_t length = this->mapTasks.size();
+		for (size_t i = 0; i < length; ++i) {
+			if (!this->mapTasks[i].isAssigned) {
+				reply.index = i;
+				reply.taskType = mr_tasktype::MAP;
+				reply.filename = files[i];
+				this->mapTasks[i].isAssigned = true;
+				break;
+			}
+		}
+	}
+	this->mtx.unlock();
 	return mr_protocol::OK;
 }
 
 mr_protocol::status Coordinator::submitTask(int taskType, int index, bool &success) {
 	// Lab2 : Your code goes here.
+	switch (taskType)
+	{
+	case mr_tasktype::MAP:
+		if (success) {
+			this->mtx.lock();
+			this->mapTasks[index].isCompleted = true;
+			this->completedMapCount ++;
+			this->mtx.unlock();
+		} else {
+			this->mtx.lock();
+			this->mapTasks[index].isAssigned = false;
+			this->mtx.unlock();
+		}
+		break;
+	
+	case mr_tasktype::REDUCE:
+		if (success) {
+			this->mtx.lock();
+			this->reduceTasks[index].isCompleted = true;
+			this->completedReduceCount ++;
+			this->mtx.unlock();
+		} else {
+			this->mtx.lock();
+			this->reduceTasks[index].isAssigned = false;
+			this->mtx.unlock();
+		}
+		break;
+	
+	default:
+		printf("Coordinator: Unexpected submmittion\n");
+		break;
+	}
 
 	return mr_protocol::OK;
 }
@@ -149,6 +210,9 @@ int main(int argc, char *argv[])
 	// Lab2: Your code here.
 	// Hints: Register "askTask" and "submitTask" as RPC handlers here
 	// 
+
+	server.reg(mr_protocol::asktask, &c, &Coordinator::askTask);
+	server.reg(mr_protocol::submittask, &c, &Coordinator::submitTask);
 
 	while(!c.Done()) {
 		sleep(1);
