@@ -53,7 +53,7 @@ public:
     int term;
     command cmd;
 
-    log_entry() {}
+    log_entry(): term(-1) {}
     log_entry(int _term, command _cmd): term(_term), cmd(_cmd) {}
 };
 

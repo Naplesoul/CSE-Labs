@@ -21,22 +21,27 @@
 template<typename command>
 class persistent_log {
 private:
-    std::vector<log_entry<command>> log;
+    std::vector<log_entry<command>> in_mem_log;
     size_t start_idx;
+    log_entry<command> error_entry;
 
 public:
 persistent_log(): start_idx(0) {}
 
 log_entry<command> &operator[](size_t idx) {
-    return log[idx - start_idx];
+    if (idx < start_idx) {
+        printf("try to access log[%ld], which is already in snapshot", idx);
+        return error_entry;
+    }
+    return in_mem_log[idx - start_idx];
 }
 
 size_t size() {
-    return log.size() + start_idx;
+    return in_mem_log.size() + start_idx;
 }
 
 void append(log_entry<command> &entry) {
-    log.push_back(entry);
+    in_mem_log.push_back(entry);
 }
 };
 
