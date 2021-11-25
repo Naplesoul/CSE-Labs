@@ -23,15 +23,17 @@ class persistent_log {
 private:
     std::vector<log_entry<command>> in_mem_log;
     size_t start_idx;
-    log_entry<command> error_entry;
+    // log_entry<command> error_entry;
 
 public:
-persistent_log(): start_idx(0) {}
+persistent_log(): start_idx(0) {
+    in_mem_log.emplace_back();
+}
 
 log_entry<command> &operator[](size_t idx) {
     if (idx < start_idx) {
-        printf("try to access log[%ld], which is already in snapshot", idx);
-        return error_entry;
+    //     printf("try to access log[%ld], which is in snapshot", idx);
+    //     return error_entry;
     }
     return in_mem_log[idx - start_idx];
 }
@@ -43,7 +45,76 @@ size_t size() {
 void append(log_entry<command> &entry) {
     in_mem_log.push_back(entry);
 }
+
+std::vector<log_entry<command>> &get_vector() {
+    // TODO:
+    return in_mem_log;
+}
+
+std::vector<log_entry<command>> sub_vector(size_t start) {
+    if (start < start_idx) {
+        // ToDo
+    }
+    auto start_iter = in_mem_log.end();
+    start_iter -= (in_mem_log.size() + start_idx - start);
+    return std::vector<log_entry<command>>(start_iter, in_mem_log.end());
+}
+
+void delete_after(size_t start) {
+    if (start < start_idx) {
+        // ToDo
+    }
+    auto start_iter = in_mem_log.begin();
+    start_iter += (start - start_idx);
+    in_mem_log.erase(start_iter, in_mem_log.end());
+}
+
+void clear() {
+    // TODO
+    in_mem_log.clear();
+    in_mem_log.emplace_back();
+}
+
+void append(const std::vector<log_entry<command>> &entries) {
+    in_mem_log.insert(in_mem_log.end(), entries.begin(), entries.end());
+}
 };
+
+class m {
+    public:
+    void lock() {}
+    void unlock() {}
+};
+
+// class confirmed_sets {
+// private:
+//     std::vector<std::set<int>> sets;
+//     size_t start_idx;
+//     std::set<int> error_set;
+
+// public:
+// confirmed_sets(): start_idx(0) {}
+
+// std::set<int> &operator[](size_t idx) {
+//     if (idx < start_idx) {
+//         printf("try to access confirmed_set[%ld], which has been truncated", idx);
+//         return error_set;
+//     }
+//     return sets[idx - start_idx];
+// }
+
+// void emplace_back() {
+//     sets.emplace_back();
+// }
+
+// void truncate(size_t last_ended_idx) {
+//     start_idx = last_ended_idx + 1;
+//     auto start = sets.end();
+//     start -= (sets.size() - start_idx);
+//     std::vector<std::set<int>> truncated(start, sets.end());
+//     sets = truncated;
+// }
+// };
 
 
 template<typename state_machine, typename command>
@@ -134,6 +205,7 @@ private:
     int commit_idx;
     int last_applied;
     std::set<int> vote_for_me;
+    // confirmed_sets confirm_append;
     std::chrono::system_clock::time_point last_received_heartbeat_time;
     std::chrono::system_clock::time_point election_start_time;
 
@@ -192,7 +264,11 @@ raft<state_machine, command>::raft(rpcs* server, std::vector<rpcc*> clients, int
     background_commit(nullptr),
     background_apply(nullptr),
     heartbeat_timeout(500),
-    current_term(0)
+    current_term(0),
+    commit_idx(0),
+    last_applied(0),
+    next_idx(clients.size(), 1),
+    match_idx(clients.size(), 0)
 {
     thread_pool = new ThrPool(32);
 
@@ -270,8 +346,21 @@ void raft<state_machine, command>::start() {
 template<typename state_machine, typename command>
 bool raft<state_machine, command>::new_command(command cmd, int &term, int &index) {
     // Your code here:
-
+    mtx.lock();
     term = current_term;
+
+    if (role != raft_role::leader) {
+        mtx.unlock();
+        return false;
+    }
+
+    int entry_idx = log.size();
+    log_entry<command> entry(current_term, cmd);
+    log.append(entry);
+    match_idx[my_id] = entry_idx;
+    index = entry_idx;
+    mtx.unlock();
+    printf("%d add log[%d] value = %d\n", my_id, entry_idx, cmd.get_val());
     return true;
 }
 
@@ -300,10 +389,6 @@ int raft<state_machine, command>::request_vote(request_vote_args args, request_v
         reply.vote_granted = false;
         return 0;
     }
-    
-    last_received_heartbeat_time = std::chrono::system_clock::now();
-    int current_log_idx = log.size() - 1;
-    int current_log_term = current_log_idx < 0 ? -1 : log[current_log_idx].term;
 
     if (args.term > current_term) {
         set_current_term(args.term);
@@ -317,6 +402,9 @@ int raft<state_machine, command>::request_vote(request_vote_args args, request_v
         reply.vote_granted = false;
         return 0;
     }
+    
+    int current_log_idx = log.size() - 1;
+    int current_log_term = log[current_log_idx].term;
 
     if (current_log_term > args.last_log_term) {
         mtx.unlock();
@@ -325,6 +413,7 @@ int raft<state_machine, command>::request_vote(request_vote_args args, request_v
     }
 
     if (current_log_term < args.last_log_term || current_log_idx <= args.last_log_index) {
+        last_received_heartbeat_time = std::chrono::system_clock::now();
         set_vote_for(args.candidate_id);
         mtx.unlock();
         reply.vote_granted = true;
@@ -343,19 +432,30 @@ void raft<state_machine, command>::handle_request_vote_reply(int target, const r
     if (reply.vote_granted)
         printf("%d vote for %d in term %d\n", target, my_id, arg.term);
         
+    mtx.lock();
     if (role != raft_role::candidate || arg.term < current_term) {
+        mtx.unlock();
+        return;
+    }
+
+    if (reply.term > current_term) {
+        set_current_term(reply.term);
+        role = raft_role::follower;
+        mtx.unlock();
         return;
     }
 
     if (reply.vote_granted) {
-        mtx.lock();
         vote_for_me.insert(target);
         if (vote_for_me.size() > rpc_clients.size() / 2) {
             printf("%d become leader in term %d\n", my_id, current_term);
             role = raft_role::leader;
+            int n_idx = log.size();
+            fill(next_idx.begin(), next_idx.end(), n_idx);
+            fill(match_idx.begin(), match_idx.end(), 0);
         }
-        mtx.unlock();
     }
+    mtx.unlock();
     return;
 }
 
@@ -364,7 +464,7 @@ template<typename state_machine, typename command>
 int raft<state_machine, command>::append_entries(append_entries_args<command> arg, append_entries_reply& reply) {
     // Your code here:
     mtx.lock();
-    printf("%d receive heartbeat from %d at term %d\n", my_id, arg.leader_id, current_term);
+    // printf("%d receive append_entries from %d at term %d\n", my_id, arg.leader_id, current_term);
     
     reply.term = current_term;
 
@@ -384,6 +484,28 @@ int raft<state_machine, command>::append_entries(append_entries_args<command> ar
         role = raft_role::follower;
     }
 
+    if (arg.prev_log_idx > int(log.size() - 1)) {
+        mtx.unlock();
+        reply.success = false;
+        return 0;
+    }
+
+    if (log[arg.prev_log_idx].term != arg.prev_log_term) {
+        log.delete_after(arg.prev_log_idx);
+        mtx.unlock();
+        reply.success = false;
+        return 0;
+    }
+
+    log.delete_after(arg.prev_log_idx + 1);
+
+    if (!arg.entries.empty()) {
+        // printf("append log idx from %d to %ld on %d\n", arg.prev_log_idx + 1, arg.prev_log_idx + arg.entries.size(), my_id);
+        log.append(arg.entries);
+    }
+
+
+    commit_idx = arg.leader_commit > commit_idx ? arg.leader_commit : commit_idx;
     mtx.unlock();
     reply.success = true;
     return 0;
@@ -392,7 +514,36 @@ int raft<state_machine, command>::append_entries(append_entries_args<command> ar
 template<typename state_machine, typename command>
 void raft<state_machine, command>::handle_append_entries_reply(int target, const append_entries_args<command>& arg, const append_entries_reply& reply) {
     // Your code here:
-    return;
+    if (reply.success) {
+        mtx.lock();
+        match_idx[target] = arg.prev_log_idx + arg.entries.size();
+        next_idx[target] = match_idx[target] + 1;
+        mtx.unlock();
+        printf("%d append success to log[%d]\n", target, match_idx[target]);
+    } else {
+        printf("%d append fail\n", target);
+        mtx.lock();
+        if (reply.term > arg.term) {
+            if (reply.term > current_term) {
+                set_current_term(reply.term);
+            }
+            last_received_heartbeat_time = std::chrono::system_clock::now();
+            role = raft_role::follower;
+            mtx.unlock();
+            return;
+        }
+
+        int last_log_idx = log.size() - 1;
+        int n_idx = next_idx[target] > 1 ? next_idx[target] - 1 : 1;
+        int prev_log_idx = n_idx - 1;
+        int prev_log_term = log[prev_log_idx].term;
+        next_idx[target] = n_idx;
+        std::vector<log_entry<command>> entries = n_idx > last_log_idx ? std::vector<log_entry<command>>() : log.sub_vector(n_idx);
+
+        mtx.unlock();
+        append_entries_args<command> args(current_term, my_id, prev_log_idx, prev_log_term, commit_idx, entries);
+        send_append_entries(target, args);
+    }
 }
 
 
@@ -468,20 +619,24 @@ void raft<state_machine, command>::run_background_election() {
             if (time >= heartbeat_timeout) {
                 printf("%d start election\n", my_id);
                 role = raft_role::candidate;
-                ++current_term;
+                set_current_term(current_term + 1);
                 vote_for_me.clear();
-                set_vote_for(-1);
+                printf("%d vote for %d in term %d\n", my_id, my_id, current_term);
+                vote_for_me.insert(my_id);
+                set_vote_for(my_id);
                 election_start_time = std::chrono::system_clock::now();
 
                 int current_log_idx = log.size() - 1;
-                int current_log_term = current_log_idx < 0 ? -1 : log[current_log_idx].term;
+                int current_log_term = log[current_log_idx].term;
 
                 request_vote_args args(current_term, my_id, current_log_idx, current_log_term);
                 mtx.unlock();
 
                 int server_number = rpc_clients.size();
                 for (int i = 0; i < server_number; ++i) {
-                    thread_pool->addObjJob(this, &raft::send_request_vote, i, args);
+                    if (i != my_id) {
+                        thread_pool->addObjJob(this, &raft::send_request_vote, i, args);
+                    }
                 }
             } else {
                 mtx.unlock();
@@ -516,6 +671,33 @@ void raft<state_machine, command>::run_background_commit() {
         if (is_stopped()) return;
         // Your code here:
 
+        mtx.lock();
+        if (role == raft_role::leader) {
+            // printf("1\n");
+            int last_log_idx = log.size() - 1;
+            int server_number = rpc_clients.size();
+            for (int i = 0; i < server_number; ++i) {
+                int n_idx = next_idx[i];
+                if (last_log_idx >= n_idx && i != my_id) {
+                    int prev_log_idx = n_idx - 1;
+                    int prev_log_term = log[prev_log_idx].term;
+                    std::vector<log_entry<command>> entries = log.sub_vector(n_idx);
+                    append_entries_args<command> args(current_term, my_id, prev_log_idx, prev_log_term, commit_idx, entries);
+                    thread_pool->addObjJob(this, &raft::send_append_entries, i, args);
+                }
+            }
+            // printf("2\n");
+            std::vector<int> commit(match_idx);
+            mtx.unlock();
+
+            sort(commit.begin(), commit.end());
+
+            mtx.lock();
+            commit_idx = commit[server_number / 2];
+            // printf("commit_idx: %d\n", commit_idx);
+        }
+        
+        mtx.unlock();
         
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }    
@@ -535,7 +717,16 @@ void raft<state_machine, command>::run_background_apply() {
     while (true) {
         if (is_stopped()) return;
         // Your code here:
-
+        mtx.lock();
+        if (commit_idx > last_applied) {
+            for (int i = last_applied + 1; i <= commit_idx; ++i) {
+                state->apply_log(log[i].cmd);
+                printf("%d applied log %d value = %d\n", my_id, i, log[i].cmd.get_val());
+            }
+            last_applied = commit_idx;
+        }
+        mtx.unlock();
+        // printf("%d, %d\n", last_applied, commit_idx);
         
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }    
@@ -554,21 +745,22 @@ void raft<state_machine, command>::run_background_ping() {
 
         mtx.lock();
         if (role == raft_role::leader) {
+            int last_log_idx = log.size() - 1;
             int server_number = rpc_clients.size();
-            int prev_log_idx = log.size() - 1;
-            int prev_log_term = prev_log_idx < 0 ? -1 : log[prev_log_idx].term;
-            append_entries_args<command> args(current_term, my_id, prev_log_idx, prev_log_term,
-                commit_idx, std::vector<log_entry<command>>());
-            mtx.unlock();
             for (int i = 0; i < server_number; ++i) {
-                // printf("%d sending heartbeat to %d\n", my_id, i);
-                thread_pool->addObjJob(this, &raft::send_append_entries, i, args);
+                int n_idx = next_idx[i];
+                if (i != my_id) {
+                    int prev_log_idx = n_idx - 1;
+                    int prev_log_term = log[prev_log_idx].term;
+                    std::vector<log_entry<command>> entries = n_idx > last_log_idx ? std::vector<log_entry<command>>() : log.sub_vector(n_idx);
+                    append_entries_args<command> args(current_term, my_id, prev_log_idx, prev_log_term, commit_idx, entries);
+                    thread_pool->addObjJob(this, &raft::send_append_entries, i, args);
+                }
             }
-        } else {
-            mtx.unlock();
         }
+        mtx.unlock();
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Change the timeout here!
+        std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Change the timeout here!
     }    
     return;
 }

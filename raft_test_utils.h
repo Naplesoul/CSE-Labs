@@ -99,6 +99,10 @@ public:
         value |= buf[3] & 0xff;
     }
 
+    virtual int get_val() override {
+        return value;
+    }
+
     int value;
 };
 

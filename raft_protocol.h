@@ -53,27 +53,21 @@ public:
     int term;
     command cmd;
 
-    log_entry(): term(-1) {}
+    log_entry(): term(0) {}
     log_entry(int _term, command _cmd): term(_term), cmd(_cmd) {}
 };
 
 template<typename command>
 marshall& operator<<(marshall &m, const log_entry<command>& entry) {
     // Your code here
-    char buf[256];
-    memset(buf, 0, 256);
-    entry.cmd.serialize(buf, 256);
-    std::string command_str(buf);
-    m << entry.term << command_str;
+    m << entry.term << entry.cmd;
     return m;
 }
 
 template<typename command>
 unmarshall& operator>>(unmarshall &u, log_entry<command>& entry) {
     // Your code here
-    std::string command_str;
-    u >> entry.term >> command_str;
-    entry.cmd.deserialize(command_str.c_str(), command_str.size());
+    u >> entry.term >> entry.cmd;
     return u;
 }
 
@@ -89,8 +83,15 @@ public:
     std::vector<log_entry<command>> entries;
 
     append_entries_args() {}
+    append_entries_args(int _term, int _leader_id, int _prev_log_idx, int _prev_log_term, int _leader_commit):
+        term(_term),
+        leader_id(_leader_id),
+        prev_log_idx(_prev_log_idx),
+        prev_log_term(_prev_log_term),
+        leader_commit(_leader_commit) {}
+    
     append_entries_args(int _term, int _leader_id, int _prev_log_idx, int _prev_log_term,
-        int _leader_commit, std::vector<log_entry<command>> _entries):
+        int _leader_commit, std::vector<log_entry<command>> &_entries):
         term(_term),
         leader_id(_leader_id),
         prev_log_idx(_prev_log_idx),

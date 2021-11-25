@@ -18,6 +18,7 @@ public:
     virtual int size() const = 0;
     virtual void serialize(char* buf, int size) const = 0;
     virtual void deserialize(const char* buf, int size) = 0;
+    virtual int get_val() {return 0;}
 };
 
 class raft_state_machine {
