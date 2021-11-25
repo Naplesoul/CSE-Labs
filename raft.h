@@ -279,9 +279,10 @@ raft<state_machine, command>::raft(rpcs* server, std::vector<rpcc*> clients, int
 
     // Your code here: 
     // Do the initialization
-    srand(time(0));
-    // generate randomly between 300 to 500
-    election_timeout = rand() % 200 + 300;
+
+    // generate seperately between 300 to 500
+    election_timeout = 300 + (200 / rpc_clients.size()) * my_id;
+    last_received_heartbeat_time = std::chrono::system_clock::now();
 }
 
 template<typename state_machine, typename command>
@@ -721,7 +722,7 @@ void raft<state_machine, command>::run_background_apply() {
         if (commit_idx > last_applied) {
             for (int i = last_applied + 1; i <= commit_idx; ++i) {
                 state->apply_log(log[i].cmd);
-                printf("%d applied log %d value = %d\n", my_id, i, log[i].cmd.get_val());
+                printf("%d applied log[%d] value = %d\n", my_id, i, log[i].cmd.get_val());
             }
             last_applied = commit_idx;
         }
@@ -760,7 +761,7 @@ void raft<state_machine, command>::run_background_ping() {
         }
         mtx.unlock();
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Change the timeout here!
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // Change the timeout here!
     }    
     return;
 }
