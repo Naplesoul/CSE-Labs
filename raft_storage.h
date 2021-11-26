@@ -8,9 +8,7 @@
 #include <sstream>
 #include <vector>
 
-#define buf_size 16
-
-static_assert(buf_size >= sizeof(size_t) && buf_size >= sizeof(int));
+#define init_buf_size 16
 
 template<typename command>
 class raft_storage {
@@ -33,16 +31,13 @@ private:
     std::fstream number_storage;
     std::fstream log_storage;
     std::fstream snapshot_storage;
-    size_t cmd_size;
+    char *cmd_buf;
+    int cmd_buf_size;
 };
 
 template<typename command>
-raft_storage<command>::raft_storage(const std::string& dir) {
+raft_storage<command>::raft_storage(const std::string& dir): cmd_buf(new char[init_buf_size]), cmd_buf_size(init_buf_size) {
     // Your code here
-    
-    command test_command;
-    cmd_size = test_command.size();
-    assert(cmd_size <= buf_size);
 
     std::stringstream number_filename;
     std::stringstream log_filename;
@@ -80,7 +75,7 @@ raft_storage<command>::raft_storage(const std::string& dir) {
     log_storage.seekg(0, std::ios::end);
     file_length = log_storage.tellg();
 
-    if (file_length <= 2 * sizeof(size_t) + sizeof(int)) {
+    if (file_length < 2 * sizeof(size_t) + sizeof(int)) {
         std::vector<log_entry<command>> empty;
         empty.emplace_back();
         persist_log(0, 0, empty);
@@ -103,6 +98,7 @@ raft_storage<command>::~raft_storage() {
    // Your code here
    number_storage.close();
    log_storage.close();
+   delete []cmd_buf;
 }
 
 template<typename command>
@@ -153,12 +149,23 @@ void raft_storage<command>::persist_log(size_t start_idx, int last_included_term
     mtx.lock();
 
     log_storage.seekg(2 * sizeof(size_t) + sizeof(int));
-    char buf[buf_size];
+    char buf[sizeof(size_t)];
     for (const log_entry<command> &entry : log_entries) {
         *((int *)buf) = entry.term;
         log_storage.write(buf, sizeof(int));
-        entry.cmd.serialize(buf, cmd_size);
-        log_storage.write(buf, cmd_size);
+        
+        int cmd_size = entry.cmd.size();
+        *((int *)buf) = cmd_size;
+        log_storage.write(buf, sizeof(int));
+
+        if (cmd_size > cmd_buf_size) {
+            delete []cmd_buf;
+            cmd_buf = new char[cmd_size];
+            cmd_buf_size = cmd_size;
+        }
+
+        entry.cmd.serialize(cmd_buf, cmd_size);
+        log_storage.write(cmd_buf, cmd_size);
     }
 
     log_storage.seekg(0);
@@ -181,13 +188,23 @@ template<typename command>
 void raft_storage<command>::append_log(size_t actual_size, const log_entry<command> &entry) {
     mtx.lock();
 
-    char buf[buf_size];
+    char buf[sizeof(size_t)];
     log_storage.seekg(0, std::ios::end);
     *((int *)buf) = entry.term;
     log_storage.write(buf, sizeof(int));
 
-    entry.cmd.serialize(buf, cmd_size);
-    log_storage.write(buf, cmd_size);
+    int cmd_size = entry.cmd.size();
+    *((int *)buf) = cmd_size;
+    log_storage.write(buf, sizeof(int));
+
+    if (cmd_size > cmd_buf_size) {
+        delete []cmd_buf;
+        cmd_buf = new char[cmd_size];
+        cmd_buf_size = cmd_size;
+    }
+
+    entry.cmd.serialize(cmd_buf, cmd_size);
+    log_storage.write(cmd_buf, cmd_size);
 
     log_storage.seekg(sizeof(size_t) + sizeof(int));
     *((size_t *)buf) = actual_size;
@@ -200,7 +217,7 @@ void raft_storage<command>::append_log(size_t actual_size, const log_entry<comma
 template<typename command>
 void raft_storage<command>::read_log(size_t &start_idx, int &last_included_term, std::vector<log_entry<command>> &log_entries) {
     mtx.lock();
-    char buf[buf_size];
+    char buf[sizeof(size_t)];
 
     log_storage.seekg(0);
     log_storage.read(buf, sizeof(size_t));
@@ -216,10 +233,19 @@ void raft_storage<command>::read_log(size_t &start_idx, int &last_included_term,
         log_storage.read(buf, sizeof(int));
         int term = *((int *)buf);
 
+        log_storage.read(buf, sizeof(int));
+        int cmd_size = *((int *)buf);
+
         command cmd;
 
-        log_storage.read(buf, cmd_size);
-        cmd.deserialize(buf, cmd_size);
+        if (cmd_size > cmd_buf_size) {
+            delete []cmd_buf;
+            cmd_buf = new char[cmd_size];
+            cmd_buf_size = cmd_size;
+        }
+
+        log_storage.read(cmd_buf, cmd_size);
+        cmd.deserialize(cmd_buf, cmd_size);
         
         log_entries.emplace_back(term, cmd);
     }
