@@ -83,6 +83,7 @@ void raft_storage<command>::persist_current_term(int current_term) {
     *((int *)buf) = current_term;
     number_storage.seekg(0);
     number_storage.write(buf, sizeof(int));
+    number_storage.flush();
     mtx.unlock();
 }
 
@@ -94,6 +95,7 @@ void raft_storage<command>::persist_vote_for(int vote_for) {
     *((int *)buf) = vote_for;
     number_storage.seekg(sizeof(int));
     number_storage.write(buf, sizeof(int));
+    number_storage.flush();
     mtx.unlock();
 }
 
@@ -120,11 +122,9 @@ int raft_storage<command>::read_vote_for() {
 template<typename command>
 void raft_storage<command>::persist_log(const std::vector<log_entry<command>> &log_entries) {
     mtx.lock();
-    log_storage.seekg(0);
-    char buf[buf_size];
-    *((size_t *)buf) = log_entries.size();
-    log_storage.write(buf, sizeof(size_t));
 
+    log_storage.seekg(sizeof(size_t));
+    char buf[buf_size];
     for (const log_entry<command> &entry : log_entries) {
         int size = entry.cmd.size();
         assert(size <= buf_size);
@@ -133,17 +133,20 @@ void raft_storage<command>::persist_log(const std::vector<log_entry<command>> &l
         entry.cmd.serialize(buf, size);
         log_storage.write(buf, size);
     }
+
+    log_storage.seekg(0);
+    *((size_t *)buf) = log_entries.size();
+    log_storage.write(buf, sizeof(size_t));
+    log_storage.flush();
+    
     mtx.unlock();
 }
 
 template<typename command>
 void raft_storage<command>::append_log(size_t total_size, const log_entry<command> &entry) {
     mtx.lock();
-    log_storage.seekg(0);
-    char buf[buf_size];
-    *((size_t *)buf) = total_size;
-    log_storage.write(buf, sizeof(size_t));
 
+    char buf[buf_size];
     log_storage.seekg(0, std::ios::end);
     *((int *)buf) = entry.term;
     log_storage.write(buf, sizeof(int));
@@ -153,6 +156,11 @@ void raft_storage<command>::append_log(size_t total_size, const log_entry<comman
 
     entry.cmd.serialize(buf, size);
     log_storage.write(buf, size);
+
+    log_storage.seekg(0);
+    *((size_t *)buf) = total_size;
+    log_storage.write(buf, sizeof(size_t));
+    log_storage.flush();
     mtx.unlock();
 }
 
