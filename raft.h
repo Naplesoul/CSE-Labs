@@ -365,7 +365,7 @@ bool raft<state_machine, command>::new_command(command cmd, int &term, int &inde
     match_idx[my_id] = entry_idx;
     index = entry_idx;
     mtx.unlock();
-    RAFT_LOG("append log[%d] = %d", entry_idx, cmd.get_val());
+    RAFT_LOG("append log[%d]", entry_idx);
     return true;
 }
 
@@ -646,7 +646,7 @@ int raft<state_machine, command>::install_snapshot(install_snapshot_args args, i
                 RAFT_LOG("log[%d] is appling on node %d for snapshot, log_length = %ld", i, my_id, log.size());
                 assert((size_t)i < log.size());
                 state->apply_log(log[i].cmd);
-                RAFT_LOG("log[%d] = %d has been applied on node %d for snapshot", i, log[i].cmd.get_val(), my_id);
+                RAFT_LOG("log[%d] has been applied on node %d for snapshot", i, my_id);
             }
             last_applied = commit_idx;
         }
@@ -877,7 +877,7 @@ void raft<state_machine, command>::run_background_apply() {
                 RAFT_LOG("log[%d] is appling on node %d, log_length = %ld", i, my_id, log.size());
                 assert((size_t)i < log.size());
                 state->apply_log(log[i].cmd);
-                RAFT_LOG("log[%d] = %d has been applied on node %d", i, log[i].cmd.get_val(), my_id);
+                RAFT_LOG("log[%d] has been applied on node %d", i, my_id);
             }
             last_applied = commit_idx;
         }
