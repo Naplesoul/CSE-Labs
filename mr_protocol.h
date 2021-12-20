@@ -27,7 +27,25 @@ public:
 
 	struct AskTaskResponse {
 		// Lab2: Your definition here.
+		mr_tasktype taskType;
+		int index;
+		string filename;
 	};
+
+	friend marshall &operator<<(marshall &m, const AskTaskResponse &d)
+	{
+		int taskType = d.taskType;
+		m << taskType << d.index << d.filename;
+		return m;
+	}
+
+	friend unmarshall &operator>>(unmarshall &u, AskTaskResponse &d)
+	{
+		int taskType;
+		u >> taskType >> d.index >> d.filename;
+		d.taskType = (mr_tasktype)taskType;
+		return u;
+	}
 
 	struct AskTaskRequest {
 		// Lab2: Your definition here.

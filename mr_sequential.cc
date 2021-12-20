@@ -28,7 +28,32 @@ vector<KeyVal> Map(const string &filename, const string &content)
 {
     // Your code goes here
     // Hints: split contents into an array of words.
+    vector<KeyVal> results;
+    string str = content;
+    int length = str.length();
+    int word_end = 0;
+    while (length > 0 && word_end <= length) {
+        char letter = str[word_end];
+        if ((letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')) {
+            word_end ++;
+        } else {
+            if (word_end != 0) {
+                string word = str.substr(0, word_end);
+                KeyVal kv;
+                kv.key = word;
+                kv.val = "1";
+                results.push_back(kv);
+                str.erase(0, word_end + 1);
+                word_end = 0;
+                length = str.length();
+            } else {
+                str.erase(0, 1);
+                length --;
+            }
+        }
+    }
 
+    return results;
 }
 
 //
@@ -40,7 +65,12 @@ string Reduce(const string &key, const vector <string> &values)
 {
     // Your code goes here
     // Hints: return the number of occurrences of the word.
-
+    int total_num = 0;
+    for (string value : values) {
+        int num = atoi(value.c_str());
+        total_num += num;
+    }
+    return to_string(total_num);
 }
 
 int main(int argc, char ** argv)
