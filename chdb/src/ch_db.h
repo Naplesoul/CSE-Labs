@@ -4,6 +4,8 @@
 #include "common.h"
 #include "shard_client.h"
 
+#include <set>
+
 
 using shard_dispatch = int (*)(int key, int shard_num);
 using chdb_raft = raft<chdb_state_machine, chdb_command>;
@@ -14,6 +16,7 @@ using chdb_raft_group = raft_group<chdb_state_machine, chdb_command>;
  * */
 class view_server {
 public:
+
     rpc_node *node;
     shard_dispatch dispatch;            /* Dispatch requests to the target shard */
     chdb_raft_group *raft_group;
@@ -21,10 +24,16 @@ public:
     view_server(const int base_port,
                 shard_dispatch dispatch,
                 const int num_raft_nodes = 3) :
-            dispatch(dispatch),
-            node(new rpc_node(base_port)) {
+            node(new rpc_node(base_port)),
+            dispatch(dispatch) {
 #if RAFT_GROUP
         raft_group = new chdb_raft_group(num_raft_nodes);
+        for (int i = 0; i < num_raft_nodes; ++i) {
+            auto state = dynamic_cast<chdb_state_machine *>(raft_group->states[i]);
+            state->base_port = base_port;
+            state->dispatch = dispatch;
+            state->node = node;
+        }
 #endif
     };
 
@@ -62,9 +71,15 @@ public:
             const chdb_protocol::operation_var &var,
             int &r);
 
+    chdb_protocol::prepare_state tx_can_commit(int tx_id);
+    int tx_begin(int tx_id);
+    int tx_commit(int tx_id);
+    int tx_abort(int tx_id);
 
     ~view_server();
 
+private:
+    void append_log(chdb_command &entry);
 };
 
 
@@ -74,8 +89,8 @@ public:
 class chdb {
 public:
     chdb(const int shard_num, const int cluster_port, shard_dispatch dispatch = default_dispatch)
-            : max_tx_id(0),
-              vserver(new view_server(cluster_port, dispatch)) {
+            : vserver(new view_server(cluster_port, dispatch)),
+            max_tx_id(0) {
         for (int i = 1; i <= shard_num; ++i) {
             shard_client *shard = new shard_client(i, i + cluster_port);
             vserver->add_shard_client(shard);

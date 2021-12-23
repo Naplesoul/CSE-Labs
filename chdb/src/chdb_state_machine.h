@@ -1,6 +1,9 @@
 #include "rpc.h"
 #include "raft_state_machine.h"
+#include "common.h"
 
+
+using shard_dispatch = int (*)(int key, int shard_num);
 
 class chdb_command : public raft_command {
 public:
@@ -8,6 +11,10 @@ public:
         CMD_NONE = 0xdead,   // Do nothing
         CMD_GET,        // Get a key-value pair
         CMD_PUT,        // Put a key-value pair
+        TX_BEGIN,
+        TX_PREPARE,
+        TX_COMMIT,
+        TX_ABORT
     };
 
     // TODO: You may add more fields for implementation.
@@ -29,15 +36,11 @@ public:
 
     virtual ~chdb_command() {}
 
-
-    int key, value, tx_id;
     command_type cmd_tp;
+    int key, value, tx_id, should_send_rpc;
     std::shared_ptr<result> res;
 
-
-    virtual int size() const override {
-        return sizeof(*this);
-    }
+    virtual int size() const override;
 
     virtual void serialize(char *buf, int size) const override;
 
@@ -49,7 +52,23 @@ marshall &operator<<(marshall &m, const chdb_command &cmd);
 unmarshall &operator>>(unmarshall &u, chdb_command &cmd);
 
 class chdb_state_machine : public raft_state_machine {
+private:
+    std::vector<chdb_command> log;
+    std::vector<chdb_command> get_tx_log(int tx_id);
+    std::set<int> get_shard_offset(int tx_id);
+
+    int shard_num() const {
+        return this->node->rpc_clients.size();
+    }
 public:
+    int base_port;
+    rpc_node *node;
+    shard_dispatch dispatch;
+    chdb_state_machine() {}
+    chdb_state_machine(int base_port, rpc_node *node , shard_dispatch dispatch):
+        base_port(base_port),
+        node(node),
+        dispatch(dispatch) {}
     virtual ~chdb_state_machine() {}
 
     // Apply a log to the state machine.

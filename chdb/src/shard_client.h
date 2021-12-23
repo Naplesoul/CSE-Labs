@@ -2,14 +2,23 @@
 #include "protocol.h"
 #include "chdb_state_machine.h"
 
+#include <list>
+
 class value_entry {
 public:
     value_entry() {}
-
+    value_entry(const int value): value(value) {}
     value_entry(const value_entry &entry) : value(entry.value) {}
 
     int value;
 };
+
+struct undo_log_entry
+{
+    bool has_old_val;
+    int key, old_val, new_val;
+};
+
 
 /**
  * Storage layer for each shard. Support fault tolerance.
@@ -80,12 +89,16 @@ public:
         return this->store[primary_replica];
     }
 
+    void replicate_tx(int tx_id);
+
+    bool active;
     int shard_id;
     int view_server_port;
-    bool active;
     rpc_node *node;
     std::vector<std::map<int, value_entry>> store;
     int primary_replica = 0;
     int replica_num = 5;
 
+private:
+    std::map<int, std::list<undo_log_entry>> undo_log;
 };

@@ -1,5 +1,5 @@
-#ifndef protocal_h
-#define protocal_h
+#ifndef protocol_h
+#define protocol_h
 
 #include "rpc.h"
 
@@ -27,6 +27,9 @@ namespace chdb_protocol {
         int tx_id;
         int key;
         int value;
+        operation_var() {}
+        operation_var(int tx_id, int key, int value):
+            tx_id(tx_id), key(key), value(value) {}
     };
 
     class dummy_var {
@@ -93,4 +96,4 @@ namespace chdb_protocol {
 }
 
 
-#endif protocal_h
+#endif
