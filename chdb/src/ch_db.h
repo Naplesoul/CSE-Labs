@@ -76,10 +76,14 @@ public:
     int tx_commit(int tx_id);
     int tx_abort(int tx_id);
 
+    void aquire_lock() {mtx.lock();}
+    void release_lock() {mtx.unlock();}
+
     ~view_server();
 
 private:
     void append_log(chdb_command &entry);
+    std::mutex mtx;
 };
 
 

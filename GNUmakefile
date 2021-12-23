@@ -92,7 +92,7 @@ fuse.o: fuse.cc
 -include *.d
 -include rpc/*.d
 
-clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d chfs_client extent_server rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g part1_tester demo_client demo_server mr_coordinator mr_worker mr_sequential raft_test raft_temp rpc/$(RPCLIB) chdb_test chdb/src/*.o chdb/test/*.o
+clean_files=rpc/rpctest rpc/*.o rpc/*.d *.o *.d chfs_client extent_server rpctest test-lab2-part1-a test-lab2-part1-b test-lab2-part1-c test-lab2-part1-g part1_tester demo_client demo_server mr_coordinator mr_worker mr_sequential raft_test raft_temp rpc/$(RPCLIB) chdb_test chdb/src/*.o chdb/src/*.d chdb/test/*.o
 .PHONY: clean handin
 clean: 
 	rm $(clean_files) -rf 

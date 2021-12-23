@@ -6,7 +6,7 @@ int tx_region::put(const int key, const int val) {
     int r;
     this->db->vserver->execute(key,
                                chdb_protocol::Put,
-                               chdb_protocol::operation_var{.tx_id = tx_id, .key = key, .value = val},
+                               chdb_protocol::operation_var(tx_id, key, val),
                                r);
     return r;
 }
@@ -16,7 +16,7 @@ int tx_region::get(const int key) {
     int r;
     this->db->vserver->execute(key,
                                chdb_protocol::Get,
-                               chdb_protocol::operation_var{.tx_id = tx_id, .key = key, .value = 0},
+                               chdb_protocol::operation_var(tx_id, key, 0),
                                r);
     return r;
 }
@@ -28,6 +28,7 @@ int tx_region::tx_can_commit() {
 
 int tx_region::tx_begin() {
     // TODO: Your code here
+    db->vserver->aquire_lock();
     printf("tx[%d] begin\n", tx_id);
     return this->db->vserver->tx_begin(tx_id);
 }

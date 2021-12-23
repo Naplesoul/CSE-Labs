@@ -14,6 +14,7 @@ public:
     ~tx_region() {
         if (this->tx_can_commit() == chdb_protocol::prepare_ok) this->tx_commit();
         else this->tx_abort();
+        db->vserver->release_lock();
     }
 
     /**
@@ -23,7 +24,7 @@ public:
         int r;
         this->db->vserver->execute(1,
                                    chdb_protocol::Dummy,
-                                   chdb_protocol::operation_var{.tx_id = tx_id, .key = 1024, .value = 16},
+                                   chdb_protocol::operation_var(tx_id, 1024, 16),
                                    r);
         return r;
     }
