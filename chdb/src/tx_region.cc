@@ -4,6 +4,10 @@
 int tx_region::put(const int key, const int val) {
     // TODO: Your code here
     int r;
+    if (locked_keys.find(key) == locked_keys.end()) {
+        locked_keys.insert(key);
+        this->db->vserver->aquire_lock(key);
+    }
     this->db->vserver->execute(key,
                                chdb_protocol::Put,
                                chdb_protocol::operation_var(tx_id, key, val),
@@ -14,6 +18,10 @@ int tx_region::put(const int key, const int val) {
 int tx_region::get(const int key) {
     // TODO: Your code here
     int r;
+    if (locked_keys.find(key) == locked_keys.end()) {
+        locked_keys.insert(key);
+        this->db->vserver->aquire_lock(key);
+    }
     this->db->vserver->execute(key,
                                chdb_protocol::Get,
                                chdb_protocol::operation_var(tx_id, key, 0),
@@ -28,7 +36,6 @@ int tx_region::tx_can_commit() {
 
 int tx_region::tx_begin() {
     // TODO: Your code here
-    db->vserver->aquire_lock();
     printf("tx[%d] begin\n", tx_id);
     return this->db->vserver->tx_begin(tx_id);
 }

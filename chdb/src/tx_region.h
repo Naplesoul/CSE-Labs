@@ -1,5 +1,6 @@
 #include "ch_db.h"
 
+#include <list>
 
 /*
  * tx_region: chdb KV client which supports transaction concurrency control.
@@ -14,7 +15,9 @@ public:
     ~tx_region() {
         if (this->tx_can_commit() == chdb_protocol::prepare_ok) this->tx_commit();
         else this->tx_abort();
-        db->vserver->release_lock();
+        for (int key : locked_keys) {
+            this->db->vserver->release_lock(key);
+        }
     }
 
     /**
@@ -69,4 +72,5 @@ private:
 
     chdb *db;
     const int tx_id;
+    std::set<int> locked_keys;
 };

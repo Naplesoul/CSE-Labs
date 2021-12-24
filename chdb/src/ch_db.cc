@@ -87,6 +87,26 @@ void view_server::append_log(chdb_command &entry) {
     }
 }
 
+void view_server::aquire_lock(int key) {
+    mtx.lock();
+    auto lock = locks.find(key);
+    if (lock == locks.end()) {
+        printf("new lock for key %d\n", key);
+        locks[key];
+        lock = locks.find(key);
+    }
+    mtx.unlock();
+    lock->second.lock();
+}
+
+void view_server::release_lock(int key) {
+    auto lock = locks.find(key);
+    if (lock == locks.end()) {
+        assert(0);
+    }
+    lock->second.unlock();
+}
+
 view_server::~view_server() {
 #if RAFT_GROUP
     delete this->raft_group;
