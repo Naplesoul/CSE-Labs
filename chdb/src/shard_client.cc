@@ -5,25 +5,30 @@ int shard_client::put(chdb_protocol::operation_var var, int &r) {
     // TODO: Your code here
 
     // prepare undo log
-    undo_log_entry entry;
-    if (store[primary_replica].find(var.key) == store[primary_replica].end()) {
-        entry.has_old_val = false;
+    undo_log_entry log_entry;
+    auto entry = store[primary_replica].find(var.key);
+    if (entry == store[primary_replica].end()) {
+        log_entry.has_old_val = false;
         r = 0;
+        // wirte value
+        store[primary_replica][var.key] = value_entry(var.value);
     } else {
-        entry.has_old_val = true;
-        r = store[primary_replica][var.key].value;
-        entry.old_val = r;
+        log_entry.has_old_val = true;
+        r = entry->second.value;
+        log_entry.old_val = r;
+        // write value
+        entry->second.value = var.value;
     }
-    entry.key = var.key;
-    entry.new_val = var.value;
-    if (undo_log.find(var.tx_id) == undo_log.end()) {
-        undo_log[var.tx_id] = std::list<undo_log_entry>({ entry });
-    } else {
-        undo_log[var.tx_id].push_back(entry);
-    }
+    log_entry.key = var.key;
+    log_entry.new_val = var.value;
 
-    // wirte value
-    store[primary_replica][var.key] = value_entry(var.value);
+    auto tx_logs = undo_log.find(var.tx_id);
+    if (tx_logs == undo_log.end()) {
+        undo_log[var.tx_id] = std::list<undo_log_entry>({ log_entry });
+    } else {
+        tx_logs->second.push_back(log_entry);
+    }
+    
     return 0;
 }
 

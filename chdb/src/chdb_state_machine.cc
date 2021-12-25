@@ -61,13 +61,15 @@ unmarshall &operator>>(unmarshall &u, chdb_command &cmd) {
 void chdb_state_machine::apply_log(raft_command &cmd) {
     // TODO: Your code here
     chdb_command &chdb_cmd = dynamic_cast<chdb_command&>(cmd);
-    log.push_back(chdb_cmd);
+    int shard_offset = dispatch(chdb_cmd.key, shard_num());
     
     if (!chdb_cmd.should_send_rpc) {
+        if (chdb_cmd.cmd_tp == chdb_command::CMD_PUT) {
+            related_shards[chdb_cmd.tx_id].insert(shard_offset);
+        }
         return;
     }
     
-    int shard_offset = dispatch(chdb_cmd.key, shard_num());
     std::unique_lock<std::mutex> lock(chdb_cmd.res->mtx);
 
     if (chdb_cmd.cmd_tp == chdb_command::CMD_GET) {
@@ -76,14 +78,17 @@ void chdb_state_machine::apply_log(raft_command &cmd) {
         this->node->template call(base_port + shard_offset, chdb_protocol::Get, var, r);
         printf("GET %d = %d on shard %d\n", chdb_cmd.key, r, shard_offset);
         chdb_cmd.res->value = r;
+
     } else if (chdb_cmd.cmd_tp == chdb_command::CMD_PUT) {
+        related_shards[chdb_cmd.tx_id].insert(shard_offset);
         chdb_protocol::operation_var var(chdb_cmd.tx_id, chdb_cmd.key, chdb_cmd.value);
         int r = 0;
         this->node->template call(base_port + shard_offset, chdb_protocol::Put, var, r);
         printf("PUT %d = %d on shard %d\n", chdb_cmd.key, chdb_cmd.value, shard_offset);
         chdb_cmd.res->value = r;
+
     } else if (chdb_cmd.cmd_tp == chdb_command::TX_PREPARE) {
-        std::set<int> shard_offset = get_shard_offset(chdb_cmd.tx_id);
+        const std::set<int> &shard_offset = related_shards[chdb_cmd.tx_id];
         int base_port = this->node->port();
         chdb_protocol::prepare_var var;
         var.tx_id = chdb_cmd.tx_id;
@@ -101,10 +106,12 @@ void chdb_state_machine::apply_log(raft_command &cmd) {
         }
         printf("Preparing shard succeeded\n");
         chdb_cmd.res->value = chdb_protocol::prepare_ok;
+
     } else if (chdb_cmd.cmd_tp == chdb_command::TX_BEGIN) {
         printf("TX[%d] begin\n", chdb_cmd.tx_id);
+
     } else if (chdb_cmd.cmd_tp == chdb_command::TX_COMMIT) {
-        std::set<int> shard_offset = get_shard_offset(chdb_cmd.tx_id);
+        const std::set<int> &shard_offset = related_shards[chdb_cmd.tx_id];
         int base_port = this->node->port();
         chdb_protocol::commit_var var;
         var.tx_id = chdb_cmd.tx_id;
@@ -121,9 +128,11 @@ void chdb_state_machine::apply_log(raft_command &cmd) {
             }
         }
         printf("TX[%d] committed\n", chdb_cmd.tx_id);
+        related_shards.erase(chdb_cmd.tx_id);
         chdb_cmd.res->value = 0;
+
     } else if (chdb_cmd.cmd_tp == chdb_command::TX_ABORT) {
-        std::set<int> shard_offset = get_shard_offset(chdb_cmd.tx_id);
+        const std::set<int> &shard_offset = related_shards[chdb_cmd.tx_id];
         int base_port = this->node->port();
         chdb_protocol::rollback_var var;
         var.tx_id = chdb_cmd.tx_id;
@@ -131,36 +140,27 @@ void chdb_state_machine::apply_log(raft_command &cmd) {
             int r = 0;
             node->template call(base_port + offset, chdb_protocol::Rollback, var, r);
         }
-        chdb_cmd.res->value = 0;
         printf("TX[%d] aborted\n", chdb_cmd.tx_id);
+        related_shards.erase(chdb_cmd.tx_id);
+        chdb_cmd.res->value = 0;
+
+    } else if (chdb_cmd.cmd_tp == chdb_command::TX_ROLLBACK) {
+        const std::set<int> &shard_offset = related_shards[chdb_cmd.tx_id];
+        int base_port = this->node->port();
+        chdb_protocol::rollback_var var;
+        var.tx_id = chdb_cmd.tx_id;
+        for (auto offset : shard_offset) {
+            int r = 0;
+            node->template call(base_port + offset, chdb_protocol::Rollback, var, r);
+        }
+        printf("TX[%d] rollbacked\n", chdb_cmd.tx_id);
+        related_shards[chdb_cmd.tx_id].clear();
+        chdb_cmd.res->value = 0;
+
     } else {
         assert(0);
     }
     
     chdb_cmd.res->done = true;
     chdb_cmd.res->cv.notify_all();
-}
-
-
-std::vector<chdb_command> chdb_state_machine::get_tx_log(int tx_id) {
-    std::vector<chdb_command> cmds;
-    for (auto entry = log.rbegin(); entry != log.rend(); ++entry) {
-        if (entry->tx_id == tx_id) {
-            cmds.push_back(*entry);
-            if (entry->cmd_tp == chdb_command::TX_BEGIN) break;
-        }
-    }
-    return cmds;
-}
-
-std::set<int> chdb_state_machine::get_shard_offset(int tx_id) {
-    std::set<int> shard_offset;
-    std::vector<chdb_command> cmds = get_tx_log(tx_id);
-    int shard_count = shard_num();
-    for (auto &entry : cmds) {
-        if (entry.cmd_tp == chdb_command::CMD_PUT) {
-            shard_offset.insert(dispatch(entry.key, shard_count));
-        }
-    }
-    return shard_offset;
 }

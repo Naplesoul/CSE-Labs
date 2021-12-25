@@ -2,6 +2,11 @@
 
 #include <list>
 
+struct put_log {
+    int key, new_val;
+    put_log(int k, int v): key(k), new_val(v) {}
+};
+
 /*
  * tx_region: chdb KV client which supports transaction concurrency control.
  * */
@@ -15,9 +20,7 @@ public:
     ~tx_region() {
         if (this->tx_can_commit() == chdb_protocol::prepare_ok) this->tx_commit();
         else this->tx_abort();
-        for (int key : locked_keys) {
-            this->db->vserver->release_lock(key);
-        }
+        release_locks();
     }
 
     /**
@@ -70,7 +73,12 @@ private:
      * */
     int tx_abort();
 
+    int rollback_redo();
+    
+    void release_locks();
+
     chdb *db;
     const int tx_id;
     std::set<int> locked_keys;
+    std::list<put_log> log;
 };

@@ -15,7 +15,17 @@ using chdb_raft_group = raft_group<chdb_state_machine, chdb_command>;
  * Master node
  * */
 class view_server {
+private:
+    struct time_lock {
+        int time;
+        std::mutex lock;
+        time_lock(int t): time(t) {}
+    };
 public:
+    enum lock_state {
+        lock_ok,
+        lock_die
+    };
 
     rpc_node *node;
     shard_dispatch dispatch;            /* Dispatch requests to the target shard */
@@ -75,8 +85,9 @@ public:
     int tx_begin(int tx_id);
     int tx_commit(int tx_id);
     int tx_abort(int tx_id);
+    int tx_rollback(int tx_id);
 
-    void aquire_lock(int key);
+    lock_state aquire_lock(int key, int tx_id);
     void release_lock(int key);
 
     ~view_server();
@@ -84,7 +95,7 @@ public:
 private:
     void append_log(chdb_command &entry);
     std::mutex mtx;
-    std::map<int, std::mutex> locks;
+    std::map<int, time_lock> locks;
 };
 
 

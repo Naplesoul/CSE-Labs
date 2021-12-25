@@ -14,7 +14,8 @@ public:
         TX_BEGIN,
         TX_PREPARE,
         TX_COMMIT,
-        TX_ABORT
+        TX_ABORT,
+        TX_ROLLBACK
     };
 
     // TODO: You may add more fields for implementation.
@@ -53,9 +54,7 @@ unmarshall &operator>>(unmarshall &u, chdb_command &cmd);
 
 class chdb_state_machine : public raft_state_machine {
 private:
-    std::vector<chdb_command> log;
-    std::vector<chdb_command> get_tx_log(int tx_id);
-    std::set<int> get_shard_offset(int tx_id);
+    std::map<int, std::set<int>> related_shards;
 
     int shard_num() const {
         return this->node->rpc_clients.size();
